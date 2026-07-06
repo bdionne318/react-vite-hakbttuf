@@ -1568,6 +1568,120 @@ function RoasterDetail({ roaster, palateProfile, onBack }) {
 }
 
 // ─── STATS VIEW ───────────────────────────────────────────────────────────────
+// ─── BADGES ───────────────────────────────────────────────────────────────────
+const GROUP_COLOR = { Exploration:"#6E7B5E", Craft:"#A85436", Journey:"#B08328", Community:"#4A6C8C" };
+
+// Each badge computes {earned, current, target, hint} from the user's entries.
+function computeBadges(entries) {
+  const E = entries||[];
+  const has = E.length>0;
+  const distinct = (fn) => new Set(E.map(fn).filter(Boolean).map(x=>String(x).trim().toLowerCase())).size;
+  const count = (fn) => E.filter(fn).length;
+  const overall = e => { const s=e.scores||{}; const w={aroma:.25,flavour:.35,mouthfeel:.15,finish:.25}; let sum=0,wt=0; for(const k in w){if(s[k]){sum+=s[k]*w[k];wt+=w[k];}} return wt?sum/wt:0; };
+  const isFullRecipe = e => e.coffeeGrams&&e.yieldGrams&&e.waterTemp&&e.extractionTime;
+  const isDetailed = e => { const s=e.scores||{}; return [s.aroma,s.flavour,s.mouthfeel,s.finish].filter(v=>v!=null).length>=4; };
+  const weeks = new Set(E.map(e=>{ const d=new Date(e.date); if(isNaN(d))return null; const onejan=new Date(d.getFullYear(),0,1); return d.getFullYear()+"-"+Math.ceil((((d-onejan)/86400000)+onejan.getDay()+1)/7); }).filter(Boolean)).size;
+  // same coffee logged 3+ times
+  const nameCounts = {}; E.forEach(e=>{ if(e.name){const k=e.name.trim().toLowerCase(); nameCounts[k]=(nameCounts[k]||0)+1;} });
+  const maxSameCoffee = Object.values(nameCounts).reduce((a,b)=>Math.max(a,b),0);
+  // roast spectrum
+  const roasts = new Set(E.map(e=>e.roastLevel).filter(Boolean));
+  const publicCount = count(e=>e.isPublic);
+  const cafeRated = distinct(e=>e.cafeRating!=null?e.cafeName:null);
+  const cities = distinct(e=>e.cafeCity);
+
+  const tiered = (name,group,current,tiers,unit) => {
+    // tiers ascending; earned at first tier, tier label = highest passed
+    let earnedTier=0; tiers.forEach((t,i)=>{ if(current>=t) earnedTier=i+1; });
+    const earned = earnedTier>0;
+    const nextTier = tiers[earnedTier] ?? null;
+    const roman=["I","II","III","IV"];
+    return { name, group, earned, tier: earned&&tiers.length>1?roman[earnedTier-1]:null,
+      current, target: nextTier ?? tiers[tiers.length-1],
+      hint: nextTier?`Next: ${nextTier} ${unit}`:null };
+  };
+  const simple = (name,group,current,target,unit,doneHint) => ({
+    name, group, earned: current>=target, current, target,
+    hint: current>=target?null:(doneHint||`${target-current} more`) });
+
+  return [
+    // Exploration (sage)
+    tiered("Passport","Exploration",distinct(e=>e.origin||e.customOrigin),[5,10,15,20],"countries"),
+    tiered("Roaster Tour","Exploration",distinct(e=>e.roaster),[5,15,30],"roasters"),
+    tiered("Method Master","Exploration",distinct(e=>e.method),[5,8],"methods"),
+    { name:"Process Curious", group:"Exploration", ...(()=>{ const p=new Set(E.map(e=>e.process).filter(Boolean).map(x=>x.toLowerCase())); const cur=["washed","natural","honey"].filter(x=>p.has(x)).length + (p.size>3?1:0); return { earned:cur>=4, current:Math.min(cur,4), target:4, hint:cur>=4?null:"Try more processes" }; })() },
+    simple("Single Origin Purist","Exploration",count(e=>e.origin&&(!e.name||!/blend/i.test(e.name))),10,"single origins"),
+    tiered("Explorer","Exploration",E.length,[25],"logged"),
+    // Craft (terracotta)
+    simple("Recipe Keeper","Craft",count(isFullRecipe),10,"full recipes"),
+    { name:"Dialed In", group:"Craft", earned:maxSameCoffee>=3, current:Math.min(maxSameCoffee,3), target:3, hint:maxSameCoffee>=3?null:"Log the same coffee 3×" },
+    simple("Discerning Palate","Craft",count(isDetailed),25,"detailed ratings"),
+    simple("Ratio Master","Craft",count(e=>e.coffeeGrams&&e.yieldGrams),10,"brews with ratio"),
+    simple("Home Barista","Craft",count(e=>e.type==="home"),25,"home brews"),
+    // Journey (gold)
+    { name:"First Pour", group:"Journey", earned:has, current:has?1:0, target:1, hint:null },
+    simple("Regular","Journey",weeks,4,"weeks"),
+    simple("Devoted","Journey",E.length,50,"logged"),
+    simple("Centurion","Journey",E.length,100,"logged"),
+    // Community (blue)
+    { name:"Contributor", group:"Community", earned:publicCount>=1, current:Math.min(publicCount,1), target:1, hint:publicCount>=1?null:"Share your first log" },
+    simple("Tastemaker","Community",publicCount,10,"public logs"),
+    simple("Café Critic","Community",cafeRated,10,"cafés rated"),
+    simple("Local Guide","Community",cities,3,"cities"),
+  ];
+}
+
+function BadgeRing({ badge, size=46 }) {
+  const color = GROUP_COLOR[badge.group];
+  return (
+    <div style={{width:size,height:size,borderRadius:"50%",flexShrink:0,border:`1.5px solid ${badge.earned?color:"var(--line)"}`,background:badge.earned?color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+      <span style={{fontFamily:"var(--serif)",fontSize:size*0.4,fontStyle:"italic",color:badge.earned?"var(--surface)":"var(--ink3)",lineHeight:1}}>{badge.name[0]}</span>
+      {badge.tier&&badge.earned&&<span style={{position:"absolute",bottom:-2,right:-2,width:18,height:18,borderRadius:"50%",background:"var(--surface)",border:`1px solid ${color}`,color,fontFamily:"var(--mono)",fontSize:9,display:"flex",alignItems:"center",justifyContent:"center"}}>{badge.tier}</span>}
+    </div>
+  );
+}
+
+function BadgesPanel({ entries }) {
+  const badges = useMemo(()=>computeBadges(entries),[entries]);
+  const earnedCount = badges.filter(b=>b.earned).length;
+  const groups = ["Exploration","Craft","Journey","Community"];
+  return (
+    <div>
+      <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink3)",marginBottom:24}}>{earnedCount} of {badges.length} earned</div>
+      {groups.map(g=>{
+        const items = badges.filter(b=>b.group===g);
+        const color = GROUP_COLOR[g];
+        const got = items.filter(b=>b.earned).length;
+        return (
+          <div key={g} style={{marginBottom:30}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:color}}/>
+                <span style={{fontSize:11,letterSpacing:"2px",textTransform:"uppercase",color,fontWeight:600,fontFamily:"var(--sans)"}}>{g}</span>
+              </div>
+              <span style={{fontFamily:"var(--mono)",fontSize:11,color:"var(--ink3)"}}>{got}/{items.length}</span>
+            </div>
+            <div>
+              {items.map(b=>(
+                <div key={b.name} style={{display:"flex",alignItems:"center",gap:16,padding:"13px 0",borderBottom:"1px solid var(--line)",opacity:b.earned?1:0.68}}>
+                  <BadgeRing badge={b}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontFamily:"var(--serif)",fontSize:16,color:b.earned?"var(--ink)":"var(--ink2)"}}>{b.name}{b.tier&&b.earned?` ${b.tier}`:""}</div>
+                    {!b.earned&&b.hint&&<div style={{fontFamily:"var(--sans)",fontSize:11,color,marginTop:3}}>{b.hint}</div>}
+                  </div>
+                  {!b.earned&&b.target>1&&<div style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink3)",flexShrink:0}}>{b.current} / {b.target}</div>}
+                  {b.earned&&<div style={{fontFamily:"var(--sans)",fontSize:10,letterSpacing:"1px",textTransform:"uppercase",color,flexShrink:0}}>Earned</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{fontFamily:"var(--serif)",fontSize:13,fontStyle:"italic",color:"var(--ink3)",textAlign:"center",lineHeight:1.5,paddingTop:4}}>Badges celebrate range and craft — where you've explored, not how much you've consumed.</div>
+    </div>
+  );
+}
+
 function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
   const [tab,setTab]=useState("overview");
   const palate=useMemo(()=>buildPalateProfile(entries),[entries]);
@@ -1653,7 +1767,7 @@ function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
         </div>
       </div>}
       <div className="section-tabs">
-        {[["overview","Overview"],["rankings","My Rankings"],["palate","My Palate"],["recs","Bean Matches"]].map(([id,label])=>(
+        {[["overview","Overview"],["badges","Badges"],["palate","My Palate"],["recs","Bean Matches"]].map(([id,label])=>(
           <button key={id} className={`stab ${tab===id?"active":""}`} onClick={()=>setTab(id)} style={{position:"relative"}}>
             {label}
             {!isPro&&(id==="palate"||id==="recs")&&<span style={{position:"absolute",top:-4,right:-4,fontSize:8,background:"var(--rose)",color:"#fff",borderRadius:10,padding:"1px 4px",fontFamily:"'Inter',sans-serif"}}>Pro</span>}
@@ -1718,90 +1832,7 @@ function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
         </div>}
       </>}
 
-      {tab==="rankings"&&<>
-        {/* Top Coffees */}
-        <div className="bar-card" style={{marginBottom:16}}>
-          <div className="bar-card-title">Your Top Coffees</div>
-          <div className="bar-card-sub">Ranked by your weighted composite score</div>
-          {topMyCoffees.length===0
-            ? <div style={{fontFamily:"'Fraunces',serif",fontSize:13,color:"var(--ink3)",fontStyle:"italic",padding:"8px 0"}}>Log some coffees with scores to see your rankings.</div>
-            : topMyCoffees.map((entry,i)=>{
-                const overall=computeOverall(entry.scores);
-                const drink=drinkInfo(entry.drinkType);
-                return (
-                  <div key={entry.id} className="rank-card" style={{marginBottom:8,padding:"12px 14px"}}>
-                    <div className="rank-medal">{i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}`}</div>
-                    <div className="rank-info">
-                      <div className="rank-name">{entry.name||drinkLabel(entry)||"Coffee"}</div>
-                      <div className="rank-sub">{entry.roaster}{entry.origin?` · ${entry.origin}`:""} · {fmtDate(entry.date)}</div>
-                      {entry.tastingNotes?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-                        {entry.tastingNotes.slice(0,3).map(n=>{const fam=NOTE_TO_FAM[n];const def=NOTE_FAMILIES[fam]||{color:"#888",bg:"#f5f5f5",border:"#ddd"};return <span key={n} className="npill" style={{background:def.bg,color:def.color,border:`1px solid ${def.border}`,fontSize:10,padding:"2px 7px"}}>{n}</span>;})}
-                      </div>}
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <div className="rank-score">{overall.toFixed(1)}</div>
-                      <div className="rank-count">/10</div>
-                    </div>
-                  </div>
-                );
-              })
-          }
-        </div>
-
-        {/* Top Cafés */}
-        {topMyCafes.length>0&&<div className="bar-card" style={{marginBottom:16}}>
-          <div className="bar-card-title">Your Top Cafés</div>
-          <div className="bar-card-sub">Ranked by your average score across all visits</div>
-          {topMyCafes.map((cafe,i)=>(
-            <div key={cafe.name} className="rank-card" style={{marginBottom:8,padding:"12px 14px"}}>
-              <div className="rank-medal">{i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}`}</div>
-              <div className="rank-info">
-                <div className="rank-name">{cafe.name}</div>
-                <div className="rank-sub">{cafe.location||"Location unknown"} · {cafe.visits} {cafe.visits===1?"visit":"visits"}</div>
-                {cafe.notes.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-                  {[...new Set(cafe.notes)].slice(0,3).map(n=>{const fam=NOTE_TO_FAM[n];const def=NOTE_FAMILIES[fam]||{color:"#888",bg:"#f5f5f5",border:"#ddd"};return <span key={n} className="npill" style={{background:def.bg,color:def.color,border:`1px solid ${def.border}`,fontSize:10,padding:"2px 7px"}}>{n}</span>;})}
-                </div>}
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div className="rank-score">{cafe.avg}</div>
-                <div className="rank-count">/10</div>
-              </div>
-            </div>
-          ))}
-        </div>}
-
-        {topMyCafes.length===0&&<div className="insight-banner" style={{marginBottom:16}}>
-          <div className="insight-title">No café visits yet</div>
-          <div className="insight-body">Log coffees with "Café / Out" selected and a café name to build your personal café rankings.</div>
-        </div>}
-
-        {/* Top Roasters */}
-        {topMyRoasters.length>0&&<div className="bar-card">
-          <div className="bar-card-title">Your Top Roasters</div>
-          <div className="bar-card-sub">Ranked by your average score across all their coffees you've tried</div>
-          {topMyRoasters.map((roaster,i)=>(
-            <div key={roaster.name} className="rank-card" style={{marginBottom:8,padding:"12px 14px"}}>
-              <div className="rank-medal">{i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}`}</div>
-              <div className="rank-info">
-                <div className="rank-name">{roaster.name}</div>
-                <div className="rank-sub">{roaster.coffees} {roaster.coffees===1?"coffee":"coffees"} tried{roaster.origins.length>0?` · ${[...new Set(roaster.origins)].slice(0,2).join(", ")}`:""}</div>
-                {roaster.notes.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-                  {[...new Set(roaster.notes)].slice(0,3).map(n=>{const fam=NOTE_TO_FAM[n];const def=NOTE_FAMILIES[fam]||{color:"#888",bg:"#f5f5f5",border:"#ddd"};return <span key={n} className="npill" style={{background:def.bg,color:def.color,border:`1px solid ${def.border}`,fontSize:10,padding:"2px 7px"}}>{n}</span>;})}
-                </div>}
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div className="rank-score">{roaster.avg}</div>
-                <div className="rank-count">/10</div>
-              </div>
-            </div>
-          ))}
-        </div>}
-
-        {topMyRoasters.length===0&&<div className="insight-banner">
-          <div className="insight-title">No roasters ranked yet</div>
-          <div className="insight-body">Add a roaster name when logging coffees to build your personal roaster rankings.</div>
-        </div>}
-      </>}
+      {tab==="badges"&&<BadgesPanel entries={entries}/>}
 
       {tab==="palate"&&(!isPro
         ?<PaywallGate feature="Your Palate Profile" reason="See a visual radar chart of your flavour fingerprint, your dominant families, and how your tastes have shifted over time." onUpgrade={onUpgrade}/>
