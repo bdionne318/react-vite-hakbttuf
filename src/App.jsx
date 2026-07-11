@@ -1716,6 +1716,49 @@ function computeBadges(entries) {
   ];
 }
 
+function BrewScatter({ data, xKey, xLabel, width=320, height=200 }) {
+  const pad={l:34,r:12,t:12,b:30};
+  const xs=data.map(xKey), ys=data.map(d=>d.score);
+  const xMin=Math.min(...xs), xMax=Math.max(...xs);
+  const yMin=Math.min(...ys)-0.3, yMax=Math.max(...ys)+0.3;
+  const px=x=>pad.l+((x-xMin)/(xMax-xMin||1))*(width-pad.l-pad.r);
+  const py=y=>height-pad.b-((y-yMin)/(yMax-yMin||1))*(height-pad.t-pad.b);
+  const yTicks=[]; for(let y=Math.floor(yMin);y<=Math.ceil(yMax);y++) if(y>=yMin&&y<=yMax) yTicks.push(y);
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} style={{width:"100%",height:"auto"}}>
+      {yTicks.map(y=>(<g key={y}>
+        <line x1={pad.l} y1={py(y)} x2={width-pad.r} y2={py(y)} stroke="var(--line)" strokeWidth="1"/>
+        <text x={pad.l-6} y={py(y)+3} textAnchor="end" fontSize="9" fill="var(--ink3)" fontFamily="var(--mono)">{y}</text>
+      </g>))}
+      {data.map((d,i)=>{ const high=d.score>=8.5; return (
+        <circle key={i} cx={px(xKey(d))} cy={py(d.score)} r={high?6:5} fill={high?"var(--accent)":"none"} stroke={high?"var(--accent)":"var(--ink3)"} strokeWidth="1.5" opacity={high?1:0.7}/>
+      );})}
+      <text x={width/2} y={height-6} textAnchor="middle" fontSize="10" fill="var(--ink3)" fontFamily="var(--sans)" letterSpacing="1">{xLabel}</text>
+    </svg>
+  );
+}
+
+function BrewLine({ points, width=320, height=180, color="var(--accent)" }) {
+  if(!points||points.length<2) return <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink3)",padding:"20px 0"}}>Not enough data yet.</div>;
+  const pad={l:30,r:12,t:14,b:24};
+  const ys=points.map(p=>p.y);
+  const yMin=Math.min(...ys)-0.3, yMax=Math.max(...ys)+0.3;
+  const px=i=>pad.l+(i/(points.length-1||1))*(width-pad.l-pad.r);
+  const py=y=>height-pad.b-((y-yMin)/(yMax-yMin||1))*(height-pad.t-pad.b);
+  const path=points.map((p,i)=>`${i===0?"M":"L"}${px(i)},${py(p.y)}`).join(" ");
+  const yTicks=[]; for(let y=Math.ceil(yMin);y<=Math.floor(yMax);y++) yTicks.push(y);
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} style={{width:"100%",height:"auto"}}>
+      {yTicks.map(y=>(<g key={y}>
+        <line x1={pad.l} y1={py(y)} x2={width-pad.r} y2={py(y)} stroke="var(--line)" strokeWidth="1"/>
+        <text x={pad.l-6} y={py(y)+3} textAnchor="end" fontSize="9" fill="var(--ink3)" fontFamily="var(--mono)">{y}</text>
+      </g>))}
+      <path d={path} fill="none" stroke={color} strokeWidth="2"/>
+      {points.map((p,i)=><circle key={i} cx={px(i)} cy={py(p.y)} r="3" fill={color}/>)}
+    </svg>
+  );
+}
+
 function BadgeRing({ badge, size=46 }) {
   const color = GROUP_COLOR[badge.group];
   return (
@@ -1767,27 +1810,133 @@ function BadgesPanel({ entries }) {
   );
 }
 
+function BrewAnalyticsPanel({ entries }) {
+  const [view,setView]=React.useState("correlation");
+  const [xAxis,setXAxis]=React.useState("ratio");
+  const [selCoffee,setSelCoffee]=React.useState(null);
+
+  const ratioOf=b=>Number(b.yieldGrams)/Number(b.coffeeGrams);
+  // Home brews that have a score and at least one brew metric
+  const brews=useMemo(()=>entries.filter(e=>e.type==="home"&&overallFromEntry(e)>0).map(e=>({
+    ...e, score:overallFromEntry(e),
+    dose:Number(e.coffeeGrams)||null, yield:Number(e.yieldGrams)||null, temp:Number(e.waterTemp)||null,
+    ratio:(e.coffeeGrams>0&&e.yieldGrams>0)?Number(e.yieldGrams)/Number(e.coffeeGrams):null,
+  })),[entries]);
+
+  const xConfig={
+    ratio:{ key:b=>b.ratio, label:"RATIO (yield ÷ dose)", need:"ratio" },
+    temp:{ key:b=>b.temp, label:"WATER TEMP (°C)", need:"temp" },
+    dose:{ key:b=>b.dose, label:"DOSE (g)", need:"dose" },
+  };
+  const scatterData=brews.filter(b=>xConfig[xAxis].key(b)!=null);
+
+  // Insight gate: need >=8 brews with the relevant field
+  const MIN=8;
+  const insight=useMemo(()=>{
+    const withAll=brews.filter(b=>b.ratio!=null&&b.temp!=null&&b.dose!=null);
+    if(withAll.length<MIN) return null;
+    const sorted=[...withAll].sort((a,b)=>b.score-a.score);
+    const top=sorted.slice(0,Math.max(3,Math.round(sorted.length/3)));
+    const avg=(arr,f)=>arr.reduce((s,x)=>s+f(x),0)/arr.length;
+    return { n:withAll.length, ratio:avg(top,b=>b.ratio), temp:avg(top,b=>b.temp), dose:avg(top,b=>b.dose), score:avg(top,b=>b.score) };
+  },[brews]);
+
+  const coffees=[...new Set(brews.filter(b=>b.name).map(b=>b.name.trim()))];
+  const activeCoffee=selCoffee||coffees[0]||null;
+  const dialIn=brews.filter(b=>b.name&&b.name.trim()===activeCoffee).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const scoreTrend=brews.slice().sort((a,b)=>new Date(a.date)-new Date(b.date)).map(b=>({y:b.score}));
+
+  // Empty state
+  if(brews.length===0) return (
+    <div style={{padding:"40px 0",textAlign:"center"}}>
+      <div style={{fontFamily:"var(--serif)",fontSize:19,fontStyle:"italic",color:"var(--ink2)",marginBottom:8}}>No brew data yet</div>
+      <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink3)",lineHeight:1.6,maxWidth:290,margin:"0 auto"}}>Log home brews with dose, yield, temp and a score — and your brewing patterns will appear here.</div>
+    </div>
+  );
+
+  const methods=[...new Set(brews.map(b=>b.method).filter(Boolean))];
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:20,borderBottom:"1px solid var(--line)",marginBottom:22}}>
+        {[["correlation","Insight"],["dialin","Dial-in"],["trends","Trends"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setView(id)} style={{padding:"0 0 10px",background:"none",border:"none",borderBottom:view===id?"2px solid var(--accent)":"2px solid transparent",color:view===id?"var(--ink)":"var(--ink3)",fontFamily:"var(--sans)",fontSize:14,fontWeight:view===id?600:400,cursor:"pointer",marginBottom:-1}}>{label}</button>
+        ))}
+      </div>
+
+      {view==="correlation"&&<>
+        {insight?(
+          <div style={{background:"rgba(110,123,94,0.12)",border:"1px solid rgba(110,123,94,0.35)",borderRadius:12,padding:"16px 18px",marginBottom:20}}>
+            <div style={{fontSize:10,letterSpacing:"1.5px",textTransform:"uppercase",color:"#6E7B5E",fontWeight:600,marginBottom:6}}>What makes your best cups</div>
+            <div style={{fontFamily:"var(--serif)",fontSize:16,color:"var(--ink)",lineHeight:1.5}}>Your highest-rated brews cluster around a <strong>1:{insight.ratio.toFixed(1)} ratio</strong>, <strong>{Math.round(insight.temp)}°C</strong>, and a <strong>{insight.dose.toFixed(1)}g dose</strong> — averaging {insight.score.toFixed(1)}/10.</div>
+          </div>
+        ):(
+          <div style={{background:"var(--surface)",border:"1px solid var(--line)",borderRadius:12,padding:"16px 18px",marginBottom:20}}>
+            <div style={{fontFamily:"var(--serif)",fontSize:15,fontStyle:"italic",color:"var(--ink2)",lineHeight:1.5}}>Log at least {MIN} home brews with dose, yield, temp and a score to unlock your personalised brewing insight. You're at {brews.filter(b=>b.ratio!=null&&b.temp!=null&&b.dose!=null).length}.</div>
+          </div>
+        )}
+        {scatterData.length>=3?(<>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            {[["ratio","Ratio"],["temp","Temp"],["dose","Dose"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setXAxis(id)} style={{fontSize:12,padding:"6px 14px",borderRadius:20,border:`1px solid ${xAxis===id?"var(--accent)":"var(--line)"}`,background:xAxis===id?"var(--accent)":"none",color:xAxis===id?"var(--surface)":"var(--ink2)",cursor:"pointer",fontFamily:"var(--sans)"}}>{label}</button>
+            ))}
+          </div>
+          <div style={{fontFamily:"var(--sans)",fontSize:12,color:"var(--ink3)",marginBottom:4}}>Each dot is a brew · filled dots are your top scorers</div>
+          <BrewScatter data={scatterData} xKey={xConfig[xAxis].key} xLabel={xConfig[xAxis].label}/>
+        </>):(
+          <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink3)",padding:"10px 0"}}>Need at least 3 brews with {xAxis} logged to plot this.</div>
+        )}
+      </>}
+
+      {view==="dialin"&&<>
+        {coffees.length===0?(
+          <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink3)",padding:"20px 0"}}>Name your coffees when logging to track dial-in progress.</div>
+        ):<>
+          <div style={{fontFamily:"var(--sans)",fontSize:13,color:"var(--ink2)",marginBottom:14}}>See how you dialed in a coffee across brews.</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+            {coffees.map(c=>(<button key={c} onClick={()=>setSelCoffee(c)} style={{fontSize:12,padding:"6px 12px",borderRadius:20,border:`1px solid ${activeCoffee===c?"var(--accent)":"var(--line)"}`,background:activeCoffee===c?"var(--accent)":"none",color:activeCoffee===c?"var(--surface)":"var(--ink2)",cursor:"pointer",fontFamily:"var(--sans)"}}>{c}</button>))}
+          </div>
+          {dialIn.length>=2&&<><div style={{marginBottom:8,fontSize:11,letterSpacing:"1.5px",textTransform:"uppercase",color:"var(--ink3)",fontWeight:500}}>Score progression</div><BrewLine points={dialIn.map(b=>({y:b.score}))}/></>}
+          <div style={{marginTop:20}}>
+            {dialIn.map((b,i)=>{ const best=b.score===Math.max(...dialIn.map(x=>x.score)); return (
+              <div key={b.id||i} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid var(--line)"}}>
+                <div style={{width:20,fontFamily:"var(--mono)",fontSize:11,color:"var(--ink3)"}}>{i+1}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:"var(--mono)",fontSize:13,color:"var(--ink)"}}>{[b.dose&&`${b.dose}g`,b.ratio&&`1:${b.ratio.toFixed(1)}`,b.temp&&`${b.temp}°`].filter(Boolean).join(" · ")||"No recipe logged"}</div>
+                  <div style={{fontFamily:"var(--sans)",fontSize:11,color:"var(--ink3)",marginTop:1}}>{new Date(b.date).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</div>
+                </div>
+                <div style={{fontFamily:"var(--serif)",fontSize:20,fontWeight:300,color:best?"var(--accent)":"var(--ink2)"}}>{b.score.toFixed(1)}</div>
+                {best&&<div style={{fontSize:9,letterSpacing:"1px",textTransform:"uppercase",color:"var(--accent)",fontWeight:600}}>Best</div>}
+              </div>
+            );})}
+          </div>
+        </>}
+      </>}
+
+      {view==="trends"&&<>
+        <div style={{marginBottom:8,fontSize:11,letterSpacing:"1.5px",textTransform:"uppercase",color:"var(--ink3)",fontWeight:500}}>Score over time</div>
+        <div style={{fontFamily:"var(--sans)",fontSize:12,color:"var(--ink3)",marginBottom:6}}>Each point is a home brew, oldest to newest.</div>
+        <BrewLine points={scoreTrend}/>
+        {methods.length>0&&<>
+          <div style={{marginBottom:8,marginTop:24,fontSize:11,letterSpacing:"1.5px",textTransform:"uppercase",color:"var(--ink3)",fontWeight:500}}>By method</div>
+          {methods.map(m=>{ const mb=brews.filter(b=>b.method===m); const avg=mb.reduce((s,b)=>s+b.score,0)/mb.length; return (
+            <div key={m} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid var(--line)"}}>
+              <div style={{flex:1,fontFamily:"var(--serif)",fontSize:16,color:"var(--ink)"}}>{m}</div>
+              <div style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--ink3)"}}>{mb.length} brew{mb.length===1?"":"s"}</div>
+              <div style={{fontFamily:"var(--serif)",fontSize:20,fontWeight:300,color:"var(--accent)"}}>{avg.toFixed(1)}</div>
+            </div>
+          );})}
+        </>}
+      </>}
+    </div>
+  );
+}
+
 function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
   const [tab,setTab]=useState("overview");
   const palate=useMemo(()=>buildPalateProfile(entries),[entries]);
   const streak=useMemo(()=>computeStreak(entries),[entries]);
-  const brewStats=useMemo(()=>{
-    const home=entries.filter(e=>e.type==="home");
-    const withRatio=home.filter(e=>e.coffeeGrams>0&&e.yieldGrams>0);
-    const ratios=withRatio.map(e=>Number(e.yieldGrams)/Number(e.coffeeGrams)).filter(r=>r>0&&r<100);
-    const temps=home.map(e=>Number(e.waterTemp)).filter(t=>t>0);
-    const doses=home.map(e=>Number(e.coffeeGrams)).filter(d=>d>0);
-    const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
-    // method distribution
-    const methods={}; home.forEach(e=>{ if(e.method){methods[e.method]=(methods[e.method]||0)+1;} });
-    const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
-    return {
-      homeCount:home.length,
-      avgRatio:avg(ratios), avgTemp:avg(temps), avgDose:avg(doses),
-      topMethod: topMethod?topMethod[0]:null,
-      hasData: home.length>0&&(ratios.length>0||temps.length>0||doses.length>0),
-    };
-  },[entries]);
+  
   const topFam=FAM_KEYS.reduce((a,k)=>palate[k]>palate[a]?k:a,FAM_KEYS[0]);
   const topTwo=FAM_KEYS.slice().sort((a,b)=>palate[b]-palate[a]).slice(0,2);
   const hasPalateData=FAM_KEYS.some(k=>palate[k]>0);
@@ -1872,7 +2021,7 @@ function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
         </div>
       </div>}
       <div className="section-tabs">
-        {[["overview","Overview"],["badges","Badges"],["palate","My Palate"],["recs","Bean Matches"]].map(([id,label])=>(
+        {[["overview","Overview"],["brew","Brew"],["badges","Badges"],["palate","My Palate"],["recs","Bean Matches"]].map(([id,label])=>(
           <button key={id} className={`stab ${tab===id?"active":""}`} onClick={()=>setTab(id)} style={{position:"relative"}}>
             {label}
             
@@ -1894,16 +2043,7 @@ function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
           <div className="stat-card"><div className="stat-big">{home}</div><div className="stat-desc">Home brews</div></div>
           <div className="stat-card"><div className="stat-big">{cafe}</div><div className="stat-desc">Café visits</div></div>
         </div>
-        {brewStats.hasData&&<div className="bar-card" style={{marginTop:16}}>
-          <div className="bar-card-title">Your Brew Numbers</div>
-          <div className="bar-card-sub">Averages across your {brewStats.homeCount} home brew{brewStats.homeCount===1?"":"s"}</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:20,marginTop:14}}>
-            {brewStats.avgDose!=null&&<div><div style={{fontFamily:"var(--mono)",fontSize:22,color:"var(--accent)"}}>{brewStats.avgDose.toFixed(1)}g</div><div style={{fontFamily:"var(--sans)",fontSize:11,color:"var(--ink3)",letterSpacing:"0.5px"}}>Avg dose</div></div>}
-            {brewStats.avgRatio!=null&&<div><div style={{fontFamily:"var(--mono)",fontSize:22,color:"var(--accent)"}}>1:{brewStats.avgRatio.toFixed(1)}</div><div style={{fontFamily:"var(--sans)",fontSize:11,color:"var(--ink3)",letterSpacing:"0.5px"}}>Avg ratio</div></div>}
-            {brewStats.avgTemp!=null&&<div><div style={{fontFamily:"var(--mono)",fontSize:22,color:"var(--accent)"}}>{Math.round(brewStats.avgTemp)}°</div><div style={{fontFamily:"var(--sans)",fontSize:11,color:"var(--ink3)",letterSpacing:"0.5px"}}>Avg temp</div></div>}
-            {brewStats.topMethod&&<div><div style={{fontFamily:"var(--serif)",fontSize:18,color:"var(--ink)",fontStyle:"italic",paddingTop:2}}>{brewStats.topMethod}</div><div style={{fontFamily:"var(--sans)",fontSize:11,color:"var(--ink3)",letterSpacing:"0.5px"}}>Go-to method</div></div>}
-          </div>
-        </div>}
+        
         {sortedDims.length>0&&<div className="bar-card"><div className="bar-card-title">Avg Score by Dimension</div><div className="bar-card-sub">How you score each aspect across all coffees</div>
           {RATING_DIMS.map(d=>dimAvgs[d.id]!=null&&<div key={d.id} style={{display:"flex",alignItems:"center",gap:9,marginBottom:8}}>
             <div style={{width:68,fontSize:11,color:DIM_COLORS[d.id],fontFamily:"'Inter',sans-serif",fontWeight:500,flexShrink:0}}>{d.label}</div>
@@ -1955,6 +2095,7 @@ function StatsView({ entries, currentUser, isPro=false, onUpgrade }) {
       </>}
 
       {tab==="badges"&&<BadgesPanel entries={entries}/>}
+        {tab==="brew"&&<BrewAnalyticsPanel entries={entries}/>}
 
       {tab==="palate"&&(hasPalateData?<>
         <div className="radar-card"><div className="radar-title">Your Palate Profile</div><div className="radar-sub">Weighted by score — higher-scored coffees shape your profile more. {entries.length} entries.</div><RadarChart profile={palate} size={240}/></div>
