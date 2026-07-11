@@ -593,8 +593,10 @@ body{background:var(--bg);font-family:'Inter',sans-serif;color:var(--ink);min-he
 .fsec-title{font-family:'Inter',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--ink3);margin-bottom:11px;padding-bottom:7px;border-bottom:1.5px solid var(--border);font-weight:500;}
 .flabel{font-size:12px;color:var(--ink2);margin-bottom:5px;display:block;font-family:'Fraunces',serif;}
 .fgrp{margin-bottom:12px;}
-.finput{width:100%;padding:11px 0;background:none;border:none;border-bottom:1px solid var(--line);border-radius:0;font-family:'Inter',sans-serif;font-size:16px;color:var(--ink);outline:none;transition:border-color 0.15s;-webkit-appearance:none;appearance:none;}
-.finput-search{padding:13px 15px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;font-size:15px;}
+.finput[type=text],input[type=number],input[type=email],input[type=password],input[type=search],input:not([type]){width:100%;padding:12px 14px;background:var(--surface);border:1.5px solid var(--line);border-radius:10px;font-family:'Inter',sans-serif;font-size:16px;color:var(--ink);outline:none;transition:border-color 0.15s,background 0.15s;-webkit-appearance:none;appearance:none;}
+.finput:focus{border-color:var(--accent);background:#fff;}
+.finput::placeholder{color:var(--ink3);}
+.finput-search{font-size:15px;}
 .finput-search:focus{border-color:var(--accent);background:#fff;}
 .finput:focus{border-bottom-color:var(--accent);}
 .finput:focus{border-color:var(--navy);}
@@ -757,7 +759,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 .lf-seg-btn.on{color:var(--ink);font-style:italic;}
 .lf-seg-btn.on::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--accent);}
 .lf-body{padding:0 26px;}
-.lf-input{width:100%;border:none;border-bottom:1px solid var(--border);background:none;padding:12px 0;font-family:var(--serif);font-size:19px;font-weight:300;color:var(--ink);outline:none;transition:border-color 0.15s;}
+.lf-input{width:100%;border:1.5px solid var(--line);border-radius:10px;background:var(--surface);padding:12px 14px;font-family:var(--serif);font-size:19px;font-weight:300;color:var(--ink);outline:none;transition:border-color 0.15s,background 0.15s;}
+.lf-input:focus{border-color:var(--accent);background:#fff;}
+.lf-input::placeholder{color:var(--ink3);}
 .lf-input:focus{border-color:var(--accent);}
 .lf-input::placeholder{color:var(--ink3);}
 .lf-rating-top{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:4px;}
